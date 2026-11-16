@@ -1,0 +1,13 @@
+services:
+  converter:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      MAX_UPLOAD_MB: "20"
+      MAX_PAGES: "100"
+      CONVERSION_TIMEOUT: "120"
+    mem_limit: 1g
+    cpus: 2
+    pids_limit: 128
+    restart: unless-stopped
