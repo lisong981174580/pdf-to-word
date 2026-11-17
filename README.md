@@ -1,10 +1,13 @@
-# 纸间 · PDF 转 Word
+# 纸间 · 自托管文档工具箱
 
-可自托管的 PDF → DOCX 网页工具，中文响应式界面，拖拽上传、转换、下载完整闭环。
+可自托管的中文文档转换工具箱，支持拖拽上传、服务端离线转换和即时下载。
 
 ## 功能
 
-- 使用 pdf2docx 在 Python 后端实际转换，尽可能保留文字、图片和表格。
+- PDF 转 Word、PPT、Excel、PNG 图片。
+- Word、PPT、Excel 转 PDF（Docker 版内置 LibreOffice）。
+- 图片转 PDF，PDF 合并、拆分、压缩和旋转。
+- 使用 pdf2docx 在 Python 后端转换 Word，尽可能保留文字、图片和表格。
 - 默认最大 20 MB、100 页；文件格式、密码保护和扫描件检测。
 - 每次转换独立进程，120 秒超时，最多同时转换 2 个文件（每个服务进程）。
 - 临时文件在响应发送完成或出错后清理；不上传到第三方转换平台。
@@ -26,6 +29,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+Python 本地模式支持除 Office → PDF 外的工具；Office → PDF 依赖 Docker 镜像中安装的 LibreOffice。
+
+在 macOS 开发环境检测到可用的 LibreOffice 时，服务会加载 `fonts.conf`，将宋体、黑体、微软雅黑、等线、楷体和仿宋等常见 Windows 中文字体映射到系统字体。Docker 镜像内置 Noto CJK 与文泉驿字体作为替代，避免中文变成方框。
 
 Windows 激活命令：`.venv\Scripts\activate`。
 
@@ -63,3 +70,4 @@ curl -f http://localhost:8000/api/convert -F 'file=@example.pdf' -o example.docx
 当前版本适合个人使用和受信任的内网环境。面向公网提供服务前，需要增加身份认证、反向代理请求体限制、请求速率限制、任务队列和容器隔离。应用层限制在 multipart 解析后执行，公网入口仍需限制请求体，避免大文件提前占用磁盘。进程异常退出时的临时目录由宿主系统按策略清理。
 
 依赖组件包括 PyMuPDF（AGPL/商业双许可）；如用于闭源商业订阅服务，应先评估依赖许可证并选择合适授权方案。本仓库未替用户选择开源许可证。
+

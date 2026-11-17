@@ -1,50 +1,28 @@
-const input = document.querySelector('#file');
-const drop = document.querySelector('#drop');
-const button = document.querySelector('#convert');
-const status = document.querySelector('#status');
-const download = document.querySelector('#download');
-let file, url, busy = false, maxBytes = 20 * 1024 * 1024;
-function clearDownload() { if (url) URL.revokeObjectURL(url); url = null; download.hidden = true; }
-function select(candidate) {
-  if (busy) return;
-  clearDownload(); file = null; button.disabled = true;
-  document.querySelector('#filename').textContent = '拖入 PDF 文件';
-  document.querySelector('#filemeta').textContent = '或点击此处选择文件';
-  if (!candidate) return;
-  if (!/\.pdf$/i.test(candidate.name)) { status.textContent = '请选择 PDF 格式的文件'; return; }
-  if (!candidate.size || candidate.size > maxBytes) { status.textContent = '文件为空或超过大小限制'; return; }
-  file = candidate;
-  document.querySelector('#filename').textContent = file.name;
-  document.querySelector('#filemeta').textContent = (file.size / 1024 / 1024).toFixed(2) + ' MB · PDF 文档';
-  status.textContent = '文件已就绪，点击开始转换'; button.disabled = false;
-}
-input.addEventListener('change', () => select(input.files[0]));
-drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!busy) input.click(); } });
-for (const event of ['dragover', 'dragleave', 'drop']) drop.addEventListener(event, e => {
-  e.preventDefault(); drop.classList.toggle('over', event === 'dragover');
-  if (event === 'drop') select(e.dataTransfer.files[0]);
-});
-button.addEventListener('click', async () => {
-  if (!file || busy) return;
-  busy = true; button.disabled = true; input.disabled = true; clearDownload();
-  status.textContent = '正在转换，请稍候。大文件可能需要约 2 分钟…';
-  button.firstChild.textContent = '正在转换…';
-  const data = new FormData(); data.append('file', file);
-  try {
-    const response = await fetch('/api/convert', { method: 'POST', body: data });
-    if (!response.ok) {
-      let message = '转换失败，请稍后重试';
-      try { const body = await response.json(); if (typeof body.detail === 'string') message = body.detail; } catch (_) {}
-      throw new Error(message);
-    }
-    url = URL.createObjectURL(await response.blob()); download.href = url;
-    download.download = file.name.replace(/\.pdf$/i, '') + '.docx'; download.hidden = false;
-    status.textContent = '转换完成，点击下方按钮保存 Word 文档';
-  } catch (error) { status.textContent = error.message || '网络连接失败，请重试'; }
-  finally { busy = false; button.disabled = false; input.disabled = false; button.firstChild.textContent = '重新转换 '; }
-});
-fetch('/api/config').then(r => r.json()).then(config => {
-  maxBytes = config.max_upload_bytes;
-  document.querySelector('#limits').textContent = `支持文字版 PDF · 最大 ${maxBytes / 1024 / 1024} MB / ${config.max_pages} 页`;
-}).catch(() => {});
-window.addEventListener('beforeunload', clearDownload);
+const tools = {
+  'pdf-word':   {group:'PDF 转换', title:'PDF 转 Word', desc:'提取 PDF 中的文字、图片和表格，生成可继续编辑的 Word 文档。', accept:'.pdf', source:'PDF', target:'W', multi:false, out:'.docx'},
+  'pdf-ppt':    {group:'PDF 转换', title:'PDF 转 PPT', desc:'每一页生成一张高清幻灯片，忠实保留原始页面视觉。', accept:'.pdf', source:'PDF', target:'P', multi:false, out:'.pptx'},
+  'pdf-excel':  {group:'PDF 转换', title:'PDF 转 Excel', desc:'按 PDF 页面提取文字内容，整理为可编辑的 Excel 工作表。', accept:'.pdf', source:'PDF', target:'X', multi:false, out:'.xlsx'},
+  'pdf-images': {group:'PDF 转换', title:'PDF 转图片', desc:'将每一页转换为高清 PNG 图片，并打包下载。', accept:'.pdf', source:'PDF', target:'PNG', multi:false, out:'.zip'},
+  'word-pdf':   {group:'转换为 PDF', title:'Word 转 PDF', desc:'通过本地 LibreOffice 渲染 Word 文档，输出标准 PDF。', accept:'.doc,.docx', source:'W', target:'PDF', multi:false, out:'.pdf'},
+  'ppt-pdf':    {group:'转换为 PDF', title:'PPT 转 PDF', desc:'通过本地 LibreOffice 将演示文稿转换为 PDF。', accept:'.ppt,.pptx', source:'P', target:'PDF', multi:false, out:'.pdf'},
+  'excel-pdf':  {group:'转换为 PDF', title:'Excel 转 PDF', desc:'通过本地 LibreOffice 将工作簿转换为 PDF。', accept:'.xls,.xlsx', source:'X', target:'PDF', multi:false, out:'.pdf'},
+  'images-pdf': {group:'转换为 PDF', title:'图片转 PDF', desc:'支持多张 JPG、PNG、WebP 图片，按选择顺序合成为 PDF。', accept:'.jpg,.jpeg,.png,.webp', source:'IMG', target:'PDF', multi:true, out:'.pdf'},
+  'pdf-merge':  {group:'PDF 处理', title:'PDF 合并', desc:'上传两个或更多 PDF，按选择顺序合并为一个文档。', accept:'.pdf', source:'PDF+', target:'PDF', multi:true, out:'.pdf'},
+  'pdf-split':  {group:'PDF 处理', title:'PDF 拆分', desc:'将 PDF 的每一页拆成独立文件，并打包下载。', accept:'.pdf', source:'PDF', target:'ZIP', multi:false, out:'.zip'},
+  'pdf-compress':{group:'PDF 处理', title:'PDF 压缩', desc:'清理冗余对象并压缩内容流，在保持质量的同时减小体积。', accept:'.pdf', source:'PDF', target:'↓', multi:false, out:'.pdf'},
+  'pdf-rotate': {group:'PDF 处理', title:'PDF 旋转', desc:'将 PDF 所有页面按指定角度统一旋转。', accept:'.pdf', source:'PDF', target:'↻', multi:false, out:'.pdf', options:true}
+};
+const $ = selector => document.querySelector(selector);
+const input=$('#file'), drop=$('#drop'), convert=$('#convert'), clear=$('#clear'), status=$('#status'), download=$('#download'), list=$('#file-list');
+let current='pdf-word', files=[], objectUrl=null, busy=false, maxBytes=20*1024*1024, maxPages=100;
+function clearDownload(){if(objectUrl)URL.revokeObjectURL(objectUrl);objectUrl=null;download.hidden=true}
+function reset(){files=[];input.value='';list.innerHTML='';list.hidden=true;clearDownload();convert.disabled=true;clear.disabled=true;status.textContent='选择文件后即可开始'}
+function renderTool(name){current=name;const tool=tools[name];reset();document.querySelectorAll('.tool').forEach(el=>el.classList.toggle('active',el.dataset.tool===name));$('#tool-kicker').textContent=tool.group;$('#tool-title').textContent=tool.title;$('#tool-desc').textContent=tool.desc;$('#source-icon').textContent=tool.source;$('#target-icon').textContent=tool.target;$('#drop-title').textContent=tool.multi?'拖入多个文件':'拖入 '+tool.accept.split(',')[0].slice(1).toUpperCase()+' 文件';$('#drop-subtitle').textContent=tool.multi?'或点击批量选择文件':'或点击选择文件';input.accept=tool.accept;input.multiple=tool.multi;$('#options').hidden=!tool.options;$('#limits').textContent=`单个文件最大 ${maxBytes/1024/1024} MB${tool.accept==='.pdf'?' · 最多 '+maxPages+' 页':''}`;document.title=`${tool.title} · 纸间`}
+function choose(candidates){if(busy)return;clearDownload();files=[...candidates].filter(file=>{const ext='.'+file.name.split('.').pop().toLowerCase();return tools[current].accept.split(',').includes(ext)&&file.size>0&&file.size<=maxBytes});if(!tools[current].multi)files=files.slice(0,1);list.innerHTML='';files.forEach(file=>{const row=document.createElement('div');row.className='file-row';row.innerHTML=`<b>${file.name.split('.').pop().toUpperCase()}</b><span></span><small>${(file.size/1024/1024).toFixed(2)} MB</small>`;row.querySelector('span').textContent=file.name;list.appendChild(row)});list.hidden=!files.length;const enough=current!=='pdf-merge'||files.length>=2;convert.disabled=!files.length||!enough;clear.disabled=!files.length;status.textContent=!files.length?'没有符合格式和大小要求的文件':!enough?'PDF 合并至少需要两个文件':`已选择 ${files.length} 个文件，可以开始处理`}
+document.querySelectorAll('.tool').forEach(el=>el.addEventListener('click',()=>{renderTool(el.dataset.tool);$('.sidebar').classList.remove('open')}));
+$('#side-toggle').addEventListener('click',()=>$('.sidebar').classList.toggle('open'));
+input.addEventListener('change',()=>choose(input.files));drop.addEventListener('keydown',event=>{if((event.key==='Enter'||event.key===' ')&&!busy){event.preventDefault();input.click()}});
+for(const eventName of ['dragover','dragleave','drop'])drop.addEventListener(eventName,event=>{event.preventDefault();drop.classList.toggle('over',eventName==='dragover');if(eventName==='drop')choose(event.dataTransfer.files)});
+clear.addEventListener('click',reset);
+convert.addEventListener('click',async()=>{if(!files.length||busy)return;busy=true;convert.disabled=true;clear.disabled=true;input.disabled=true;clearDownload();convert.querySelector('span').textContent='处理中…';status.textContent='文件正在本地服务中处理，请稍候…';const data=new FormData();files.forEach(file=>data.append('files',file));let endpoint=`/api/tools/${current}`;if(current==='pdf-rotate')endpoint+=`?rotation=${$('#rotation').value}`;try{const response=await fetch(endpoint,{method:'POST',body:data});if(!response.ok){let message='处理失败，请稍后重试';try{const body=await response.json();if(typeof body.detail==='string')message=body.detail}catch(_){}throw new Error(message)}const blob=await response.blob();objectUrl=URL.createObjectURL(blob);download.href=objectUrl;const base=files[0].name.replace(/\.[^.]+$/,'');download.download=base+'-'+tools[current].title.replace(/\s/g,'')+tools[current].out;download.hidden=false;status.textContent='处理完成，结果已准备好下载'}catch(error){status.textContent=error.message||'网络连接失败，请重试'}finally{busy=false;convert.disabled=false;clear.disabled=false;input.disabled=false;convert.querySelector('span').textContent='重新处理'}});
+fetch('/api/config').then(response=>response.json()).then(config=>{maxBytes=config.max_upload_bytes;maxPages=config.max_pages;renderTool(current)}).catch(()=>renderTool(current));window.addEventListener('beforeunload',clearDownload);
